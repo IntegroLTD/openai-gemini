@@ -1,0 +1,11 @@
+services:
+  openai-gemini:
+    build: .
+    restart: unless-stopped
+    environment:
+      - PORT=8080
+    expose:
+      - "8080"
+    dns:
+      - 111.88.96.50
+      - 111.88.96.51
