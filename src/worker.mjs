@@ -357,8 +357,8 @@ const transformFnResponse = ({ content, tool_call_id }, parts) => {
   try {
     response = JSON.parse(content);
   } catch (err) {
-    console.error("Error parsing function response content:", err);
-    throw new HttpError("Invalid function response: " + content, 400);
+    // Some clients (e.g. Dify) send plain-text tool output; pass it through as-is.
+    response = content;
   }
   if (typeof response !== "object" || response === null || Array.isArray(response)) {
     response = { result: response };
