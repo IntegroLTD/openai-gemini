@@ -397,6 +397,12 @@ const sanitizeFnName = (name) => {
 };
 const restoreFnName = (name) => fnNameMap.get(name) ?? name;
 
+// Gemini 3 requires thought signatures on functionCall parts in history, but many
+// OpenAI-compatible clients (e.g. Dify) strip our extra_content field. Cache real
+// signatures by tool_call id and fall back to an official dummy signature.
+const fnSigCache = new Map(); // tool_call id -> thoughtSignature
+const DUMMY_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
+
 const transformFnCalls = ({ tool_calls }) => {
   const calls = {};
   const parts = tool_calls.map(({ function: { arguments: argstr, name }, id, type, extra_content }, i) => {
@@ -418,7 +424,9 @@ const transformFnCalls = ({ tool_calls }) => {
         name: gname,
         args,
       },
-      thoughtSignature: extra_content?.google?.thought_signature,
+      thoughtSignature: extra_content?.google?.thought_signature
+        ?? fnSigCache.get(id)
+        ?? DUMMY_THOUGHT_SIGNATURE,
     };
   });
   parts.calls = calls;
@@ -566,8 +574,13 @@ function transformCandidates (key, cand) {
       const fc = part.functionCall;
       message.tool_calls ??= [];
       const thought_signature = fc.thoughtSignature;
+      const call_id = fc.id ?? "call_" + generateId();
+      if (thought_signature) {
+        if (fnSigCache.size > 1000) { fnSigCache.clear(); }
+        fnSigCache.set(call_id, thought_signature);
+      }
       message.tool_calls.push({
-        id: fc.id ?? "call_" + generateId(),
+        id: call_id,
         type: "function",
         function: {
           name: restoreFnName(fc.name),
