@@ -382,6 +382,21 @@ const transformFnResponse = ({ content, tool_call_id }, parts) => {
   };
 };
 
+// Gemini requires function names to start with a letter/underscore and contain
+// only [a-zA-Z0-9_.:-]. Some clients (e.g. Dify workflow tools) send UUIDs.
+const fnNameMap = new Map(); // sanitized -> original
+const sanitizeFnName = (name) => {
+  let s = String(name).replace(/[^a-zA-Z0-9_.:-]/g, "_").slice(0, 128);
+  if (!/^[a-zA-Z_]/.test(s)) {
+    s = ("f_" + s).slice(0, 128);
+  }
+  if (s !== name) {
+    fnNameMap.set(s, name);
+  }
+  return s;
+};
+const restoreFnName = (name) => fnNameMap.get(name) ?? name;
+
 const transformFnCalls = ({ tool_calls }) => {
   const calls = {};
   const parts = tool_calls.map(({ function: { arguments: argstr, name }, id, type, extra_content }, i) => {
@@ -395,11 +410,12 @@ const transformFnCalls = ({ tool_calls }) => {
       console.error("Error parsing function arguments:", err);
       throw new HttpError("Invalid function arguments: " + argstr, 400);
     }
-    calls[id] = {i, name};
+    const gname = sanitizeFnName(name);
+    calls[id] = {i, name: gname};
     return {
       functionCall: {
         id: id.startsWith("call_") ? null : id,
-        name,
+        name: gname,
         args,
       },
       thoughtSignature: extra_content?.google?.thought_signature,
@@ -504,10 +520,10 @@ const transformTools = (req) => {
   if (req.tools) {
     const funcs = req.tools.filter(tool => tool.type === "function");
     funcs.forEach(adjustSchema);
-    tools = [{ function_declarations: funcs.map(schema => schema.function) }];
+    tools = [{ function_declarations: funcs.map(schema => ({ ...schema.function, name: sanitizeFnName(schema.function.name) })) }];
   }
   if (req.tool_choice) {
-    const allowed_function_names = req.tool_choice?.type === "function" ? [ req.tool_choice?.function?.name ] : undefined;
+    const allowed_function_names = req.tool_choice?.type === "function" ? [ sanitizeFnName(req.tool_choice?.function?.name) ] : undefined;
     if (allowed_function_names || typeof req.tool_choice === "string") {
       tool_config = {
         function_calling_config: {
@@ -554,7 +570,7 @@ function transformCandidates (key, cand) {
         id: fc.id ?? "call_" + generateId(),
         type: "function",
         function: {
-          name: fc.name,
+          name: restoreFnName(fc.name),
           arguments: JSON.stringify(fc.args),
         },
         extra_content: thought_signature ? {google: { thought_signature }} : undefined,
